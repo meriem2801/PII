@@ -35,12 +35,12 @@
 ---
 ## 0. Guide de lancement rapide
 
-| Étape | Objectif | Commande | Détails                                                   |
-|----:|-----------|----------|-----------------------------------------------------------|
-| 1 | Générer / MAJ le corpus | `cd training && python training_data_searching.py` | Scrape Reddit (1 200 posts) + nettoyage → **train.jsonl** |
-| 2 | Fine-tuner le dispatcher | `cd training && python finetune_dispatcher.py` | Produit **dispatcher_sbert.pt**                           |
-| 3 | Lancer l’interface | `streamlit run ui_app.py` | Chat local <http://localhost:8501> ; latence 1 s envisron |
-| 4 | Tester | « Quel temps demain ? » / « Comment aller à Gare de Lyon ? » | Vérifier emoji ☀️ / 🚇 et fraîcheur des données           |
+| Étape | Objectif                 | Commande                                                     | Détails                                                   |
+|------:|--------------------------|--------------------------------------------------------------|-----------------------------------------------------------|
+|     1 | Générer / MAJ le corpus  | `cd training && python training_data_searching.py`           | Scrape Reddit (1 200 posts) + nettoyage → **train.jsonl** |
+|     2 | Fine-tuner le dispatcher | `cd training && python finetune_dispatcher.py`               | Produit **dispatcher_sbert.pt**                           |
+|     3 | Lancer l’interface       | `streamlit run ui_app.py`                                    | Chat local <http://localhost:8501> ; latence 1 s envisron |
+|     4 | Tester                   | « Quel temps demain ? » / « Comment aller à Gare de Lyon ? » | Vérifier emoji ☀️ / 🚇 et fraîcheur des données           |
 
 > *Pré-requis :* `pip install -r requirements.txt` (20 librairies, il se peut qu'il ne soit pas à jour car j'ai ajouté au fur et à mesure (potentiellement des installations inutiles)).  
 > Variables nécessaires : `REDDIT_*`, `OPENAI_API_KEY`, `GOOGLE_MAPS_API_KEY`.  Je vous l'envoie par mail dès que possible.
@@ -80,25 +80,25 @@ Dans le même temps, l’État français publie de plus en plus de **données ou
 
 Créer un **assistant conversationnel local** qui :
 
-| Défi | Description                                                                                                                               | Impact attendu |
-|------|-------------------------------------------------------------------------------------------------------------------------------------------|----------------|
-| 1. **Compréhension** | Interpréter des questions variées, parfois ambiguës ou bilingues (FR/EN).                                                                 | Réponses naturelles sans formalisme technique. |
-| 2. **Fusion de données** | Regrouper : <br>• météo (Open-Meteo)  <br>• horaires des transports (transport.data.gouv.fr ou autre)  <br>• événements culturels/loisirs | Vue “tout-en-un” pour l’utilisateur. |
-| 3. **Réactivité locale** | Fonctionner hors-ligne ou avec réseau limité, grâce à un cache et à un modèle embarqué.                                                   | Temps de réponse < 2 s sur PC portable. |
-| 4. **Coût zéro & open-source** | S’appuyer sur des API gratuites et des modèles déployables sur CPU.                                                                       | Accessible à tout étudiant sans budget cloud. |
+| Défi                           | Description                                                                                                                               | Impact attendu                                 |
+|--------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------|
+| 1. **Compréhension**           | Interpréter des questions variées, parfois ambiguës ou bilingues (FR/EN).                                                                 | Réponses naturelles sans formalisme technique. |
+| 2. **Fusion de données**       | Regrouper : <br>• météo (Open-Meteo)  <br>• horaires des transports (transport.data.gouv.fr ou autre)  <br>• événements culturels/loisirs | Vue “tout-en-un” pour l’utilisateur.           |
+| 3. **Réactivité locale**       | Fonctionner hors-ligne ou avec réseau limité, grâce à un cache et à un modèle embarqué.                                                   | Temps de réponse < 2 s sur PC portable.        |
+| 4. **Coût zéro & open-source** | S’appuyer sur des API gratuites et des modèles déployables sur CPU.                                                                       | Accessible à tout étudiant sans budget cloud.  |
 
 En résumé, l’objectif est de **réunir météo, trajets et idées de sortie dans une seule discussion** — sans dépendre d’un serveur externe coûteux — afin de fluidifier la vie quotidienne d’un·e étudiant·e ou d’un·e citadin·e.
 
 ---
 
 ## 3. État de l’art
-| Catégorie | Solution | Avantages | Limites pour ce projet                                  |
-|-----------|----------|-----------|---------------------------------------------------------|
-| Assistants vocaux | Google Assistant, Siri | Interface vocale, écosystème solide | Cloud-first, prompts longs, coût API, temps insuffisant |
-| Apps mobilité | Citymapper, Transit | Multimodal précis | Pas de contexte météo/culture                           |
-| Frameworks d’agents | **LangChain Agents** (2023) | Orchestration Python-friendly | Dépend GPT-3.5 / OpenAI                                 |
-| Orchestration avancée | **Microsoft AutoGen** (2024) | Collaboration multi-LLM | Azure obligatoire, tokens onéreux                       |
-| Recherche académique | Router-LLM (ACL 2024) | F1 0.88 router | Nécessite GPU A100 80 Go, mon PC ne suit pas            |
+| Catégorie             | Solution                     | Avantages                           | Limites pour ce projet                                  |
+|-----------------------|------------------------------|-------------------------------------|---------------------------------------------------------|
+| Assistants vocaux     | Google Assistant, Siri       | Interface vocale, écosystème solide | Cloud-first, prompts longs, coût API, temps insuffisant |
+| Apps mobilité         | Citymapper, Transit          | Multimodal précis                   | Pas de contexte météo/culture                           |
+| Frameworks d’agents   | **LangChain Agents** (2023)  | Orchestration Python-friendly       | Dépend GPT-3.5 / OpenAI                                 |
+| Orchestration avancée | **Microsoft AutoGen** (2024) | Collaboration multi-LLM             | Azure obligatoire, tokens onéreux                       |
+| Recherche académique  | Router-LLM (ACL 2024)        | F1 0.88 router                      | Nécessite GPU A100 80 Go, mon PC ne suit pas            |
 
 **Décision :** repartir de zéro pour maîtriser la pile **local-first** et respecter le budget étudiant (0 €).
 
@@ -110,13 +110,13 @@ En résumé, l’objectif est de **réunir météo, trajets et idées de sortie 
 
 ### 4.1 Collecte & nettoyage
 
-| Étape                     | Outil / Script                 | Durée    | Résultat                                                   |
-|---------------------------|--------------------------------|----------|------------------------------------------------------------|
-| Scraper Reddit            | `DataFetcher` (lib PRAW)       | 3 jours  | Jusqu’à 1 000 questions par catégorie (transport, météo...) |
-| Nettoyage                 | Regex, `unidecode`             | ½ jour   | Suppression des doublons, accents, sauts de ligne          |
-| Annotation automatique    | `DataFetcher._PATTERNS`        | instantané | Attribution de 4 labels via des expressions régulières     |
-| Ajout de questions ciblées| `questions_meteo.jsonl`, `questions_loisir.jsonl` | ½ jour | Plus de diversité pour les classes sous-représentées       |
-| Relecture manuelle        | LibreOffice + Antidote         | 1 jour   | Environ 800 phrases revues et corrigées                    |
+| Étape                      | Outil / Script                                                                | Durée      | Résultat                                                    |
+|----------------------------|-------------------------------------------------------------------------------|------------|-------------------------------------------------------------|
+| Scraper Reddit             | `DataFetcher` (lib PRAW)                                                      | 3 jours    | Jusqu’à 1 000 questions par catégorie (transport, météo...) |
+| Nettoyage                  | Regex, `unidecode`                                                            | ½ jour     | Suppression des doublons, accents, sauts de ligne           |
+| Annotation automatique     | `DataFetcher._PATTERNS`                                                       | instantané | Attribution de 4 labels via des expressions régulières      |
+| Ajout de questions ciblées | `questions_meteo.jsonl`, `questions_loisir.jsonl`,`questions_transport.jsonl` | 1 jour     | Plus de diversité pour les classes sous-représentées        |
+| Relecture manuelle         | LibreOffice + Antidote                                                        | 1 jour     | Environ 800 phrases revues et corrigées                     |
 
 > **Pourquoi Reddit ?**
 > - Des données réelles et variées, écrites par des humains
@@ -131,12 +131,12 @@ En résumé, l’objectif est de **réunir météo, trajets et idées de sortie 
 Le script `DataFetcher.run()` applique un équilibrage simple :  
 chaque catégorie reçoit au maximum 1 000 exemples. Si une classe contient moins de 2 exemples, des duplications sont appliquées.
 
-| Classe     | Ex. Reddit | + Questions extra | Total approx.                     |
-|------------|------------|-------------------|-----------------------------------|
-| Transport  | 20         | —                 | 20 (le modèle originel suffisait) |
-| Météo      | 1          | +40               | 41                                |
-| Culture    | 200        | —                 | 200                               |
-| Loisirs    | 800        | +200              | 1000                              |
+| Classe     | Ex. Reddit | + Questions extra | Total approx. |
+|------------|------------|-------------------|---------------|
+| Transport  | 20         | +80               | 100           |
+| Météo      | 1          | +40               | 41            |
+| Culture    | 200        | —                 | 200           |
+| Loisirs    | 800        | +200              | 1000          |
 
 **Total estimé** : **≈ 1500** questions francophones.
 
@@ -170,13 +170,13 @@ Tout est disponible gratuitement sur la plateforme **Hugging Face**.
 > des vecteurs de phrases faciles à réutiliser.
 
 
-| Modèle | Params | Langues | F1-macro (XNLI) | VRAM T4 | Latence CPU i7 | Verdict |
-|--------|-------:|--------:|----------------:|--------:|---------------:|---------|
-| **MPNet-base-v2** | 278 M | 100+ | **0.83** | 1 Go | 110 ms | **Choisi** |
-| DistilBERT-m-cased | 134 M | 104 | 0.78 | 650 Mo | 85 ms | léger mais –5 pp F1 |
-| CamemBERT-base | 110 M | 🇫🇷 | 0.80 | 580 Mo | 90 ms | FR-native, pas multilingue |
-| LaBSE | 471 M | 109 | 0.85 | 2 Go | 180 ms | Trop lourd |
-| MiniLM-L12-v2 | 118 M | 110 | 0.78 | 450 Mo | **55 ms** | ultra-rapide, vecteur 384 D |
+| Modèle                | Params | Langues | F1-macro (XNLI) | VRAM T4 | Latence CPU i7 | Verdict                          |
+|-----------------------|--------|---------|------------------|--------:|----------------:|----------------------------------|
+| **MPNet-base-v2**     | 278 M  | 100+    | **0.83**         |   1 Go |         110 ms | **✅ Choisi : bon compromis**     |
+| DistilBERT-m-cased    | 134 M  | 104     | 0.78             | 650 Mo |          85 ms | Léger mais –5 points F1          |
+| CamemBERT-base        | 110 M  | 🇫🇷      | 0.80             | 580 Mo |          90 ms | FR natif, mais pas multilingue   |
+| LaBSE                 | 471 M  | 109     | 0.85             |   2 Go |         180 ms | Trop lourd pour mon usage local  |
+| MiniLM-L12-v2         | 118 M  | 110     | 0.78             | 450 Mo |          55 ms | Ultra-rapide, vecteurs 384D      |
 
 ### Que signifient les colonnes ?
 

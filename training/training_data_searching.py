@@ -188,7 +188,9 @@ if __name__ == "__main__":
         THEMES,
         extra_paths=[
             "questions_meteo.jsonl",
-            "questions_loisir.jsonl"
+            "questions_loisir.jsonl",
+            "questions_transport.jsonl"
+
         ]
     )
     fetcher.save(train, "train.jsonl")
