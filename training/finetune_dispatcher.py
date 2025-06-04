@@ -59,14 +59,24 @@ clf = nn.Sequential(
 ).to(DEVICE)
 
 # Loss pondérée (plus de sampler)
-counts = np.bincount(train_ds.labels)
-class_weights = torch.tensor(
-    len(train_ds) / counts,
+counts   = np.bincount(train_ds.labels)
+base_w   = len(train_ds) / counts          # inverse fréquence
+
+boost = {
+    label2id["transport"]: 1.8,   # x1.8
+    label2id["météo"]:     1.6,   # x1.6
+    label2id["loisirs"]:   0.7,   # x0.7
+    # pas besoin de changer culture
+}
+
+weights = torch.tensor(
+    [base_w[i] * boost.get(i, 1.0) for i in range(len(base_w))],
     device=DEVICE,
     dtype=torch.float32
 )
-loss_fn = nn.CrossEntropyLoss(weight=class_weights)
+weights = weights / weights.mean()
 
+loss_fn = nn.CrossEntropyLoss(weight=weights)
 # chargement de données
 def collate_fn(batch):
     texts, labs = zip(*batch)
