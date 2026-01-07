@@ -1,6 +1,5 @@
 openai~=0.28.0
 python-dotenv~=1.0.1
-sklearn
 deep_translator
 scikit-learn~=1.6.1
 requests~=2.32.3
