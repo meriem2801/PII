@@ -6,11 +6,11 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 from torch.nn.utils import clip_grad_norm_
-from transformers import AdamW, get_linear_schedule_with_warmup
+from transformers import get_linear_schedule_with_warmup
 from sklearn.metrics import accuracy_score, balanced_accuracy_score, f1_score
 from sentence_transformers import SentenceTransformer
 import matplotlib.pyplot as plt
-
+from torch.optim import AdamW
 from training_data_searching import RequestDataset
 
 # Pour les logs
