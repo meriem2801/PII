@@ -15,5 +15,7 @@ fake-useragent~=2.2.0
 praw
 matplotlib
 streamlit
+streamlit-js-eval
 spacy
 datasketch
+huggingface-hub

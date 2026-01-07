@@ -1,10 +1,12 @@
 from __future__ import annotations
 import functools
 import torch
+import os
 import logging
 import re
 from typing import List, Optional, Tuple
 from sentence_transformers import SentenceTransformer
+from huggingface_hub import hf_hub_download
 
 from agents.transport_agent import TransportAgent
 from agents.weather_agent   import WeatherAgent
@@ -26,16 +28,29 @@ class Dispatcher:
     }
 
     def __init__(
-            self,
-            model_path: str = "checkpoints/dispatcher_sbert.pt",
-            threshold: float = 0.50,
-            secondary_threshold: float = 0.35
+        self,
+        model_path: str = "checkpoints/dispatcher_sbert.pt",
+        hf_repo_id: str = "meriem2801/portfolio",
+        hf_filename: str = "dispatcher_sbert.pt",
+        threshold: float = 0.50,
+        secondary_threshold: float = 0.35
     ):
         self.threshold = threshold
         self.secondary_threshold = secondary_threshold
 
-        # Chargement du checkpoint fine-tune par le finetune_dispacther.py
-        ckpt = torch.load(model_path, map_location="cpu")
+        # ✅ 1) On privilégie le fichier local si présent
+        if os.path.exists(model_path):
+            resolved_path = model_path
+        else:
+            # ✅ 2) Sinon on le télécharge depuis Hugging Face (cache auto)
+            resolved_path = hf_hub_download(
+                repo_id=hf_repo_id,
+                filename=hf_filename,
+                repo_type="model",
+            )
+
+        # Chargement du checkpoint fine-tune
+        ckpt = torch.load(resolved_path, map_location="cpu")
         self.label2id = ckpt["label2id"]
         self.id2label = {i: lbl for lbl, i in self.label2id.items()}
 
