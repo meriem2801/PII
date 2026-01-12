@@ -299,7 +299,7 @@ with st.sidebar:
         # ---- Résultat ----
         if (not st.session_state.geo_pending) and (not st.session_state.ip_pending) and (st.session_state.geo_data or st.session_state.ip_data):
             city, dbg = detect_city_best_effort()
-            st.write(dbg)
+            # st.write(dbg)
 
             if city:
                 set_city(city)
