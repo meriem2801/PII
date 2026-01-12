@@ -159,7 +159,7 @@ def set_city(city: str | None):
 # =========================
 def _geo_component(key: str):
     """
-    Renvoie une string JSON (ou None) envoyée par postMessage.
+    Renvoie une string JSON (ou None) envoyée par postMessage du JS navigateur.
     """
     return components.html(
         """
