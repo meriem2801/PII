@@ -137,42 +137,41 @@ def set_city(city: str | None):
         st.session_state.user_city = city
         ctx.location = city
         ctx.city = city
+
 def _geo_component_once():
-    """
-    Appelle navigator.geolocation.getCurrentPosition() côté navigateur
-    et renvoie une string JSON via le channel Streamlit.
-    """
+    nonce = str(time.time())  # force un HTML différent à chaque appel
     return components.html(
-        """
+        f"""
         <script>
-        (function () {
-          const send = (obj) => {
+        (function () {{
+          const send = (obj) => {{
             const txt = JSON.stringify(obj);
             window.parent.postMessage(
-              { isStreamlitMessage: true, type: "streamlit:setComponentValue", value: txt },
+              {{ isStreamlitMessage: true, type: "streamlit:setComponentValue", value: txt }},
               "*"
             );
-          };
+          }};
 
-          if (!navigator.geolocation) {
-            send({ok:false, error:"Geolocation not supported"});
+          // nonce: {nonce}
+
+          if (!navigator.geolocation) {{
+            send({{ok:false, error:"Geolocation not supported"}});
             return;
-          }
+          }}
 
           navigator.geolocation.getCurrentPosition(
-            (pos) => send({ok:true, coords:{
+            (pos) => send({{ok:true, coords:{{
               latitude: pos.coords.latitude,
               longitude: pos.coords.longitude,
               accuracy: pos.coords.accuracy
-            }}),
-            (err) => send({ok:false, code: err.code, error: err.message}),
-            { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+            }}}}),
+            (err) => send({{ok:false, code: err.code, error: err.message}}),
+            {{ enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }}
           );
-        })();
+        }})();
         </script>
         """,
         height=0,
-        key=f"geo_comp_{time.time()}",
     )
 
 def get_geolocation_fallback():
