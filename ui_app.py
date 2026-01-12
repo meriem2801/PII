@@ -10,12 +10,12 @@ os.environ["SENTENCE_TRANSFORMERS_HOME"] = "/home/appuser/.cache/sentence_transf
 import re
 import time
 import types
-import json
 import requests
 import streamlit as st
-import streamlit.components.v1 as components
 import googlemaps
 from dotenv import load_dotenv
+
+from streamlit_js_eval import get_geolocation, streamlit_js_eval
 from agents.dispatcher import Dispatcher
 
 # =========================
@@ -72,24 +72,24 @@ if "history" not in st.session_state:
 if "user_city" not in st.session_state:
     st.session_state.user_city = None
 
-# --- états pour polling géoloc fiable ---
+# --- états pour polling ---
 if "geo_pending" not in st.session_state:
     st.session_state.geo_pending = False
-if "geo_started_at" not in st.session_state:
-    st.session_state.geo_started_at = 0.0
-if "geo_attempt" not in st.session_state:
-    st.session_state.geo_attempt = 0
-if "geo_payload" not in st.session_state:
-    st.session_state.geo_payload = None
+if "geo_deadline" not in st.session_state:
+    st.session_state.geo_deadline = 0.0
+if "geo_attempts" not in st.session_state:
+    st.session_state.geo_attempts = 0
+if "geo_data" not in st.session_state:
+    st.session_state.geo_data = None
 
 if "ip_pending" not in st.session_state:
     st.session_state.ip_pending = False
-if "ip_started_at" not in st.session_state:
-    st.session_state.ip_started_at = 0.0
-if "ip_attempt" not in st.session_state:
-    st.session_state.ip_attempt = 0
-if "ip_payload" not in st.session_state:
-    st.session_state.ip_payload = None
+if "ip_deadline" not in st.session_state:
+    st.session_state.ip_deadline = 0.0
+if "ip_attempts" not in st.session_state:
+    st.session_state.ip_attempts = 0
+if "ip_data" not in st.session_state:
+    st.session_state.ip_data = None
 
 # =========================
 # Dispatcher + context
@@ -142,170 +142,62 @@ def set_city(city: str | None):
         ctx.city = city
 
 # =========================
-# ✅ Composants navigateur (GPS + IP) + polling
+# ✅ Ville via IP côté navigateur (quasi certain)
 # =========================
-def _browser_geo_component():
-    # Pas de key= (ta version Streamlit ne le supporte pas)
-    nonce = str(time.time())
-    return components.html(
-        f"""
-        <script>
-        (function () {{
-          const send = (obj) => {{
-            const txt = JSON.stringify(obj);
-            window.parent.postMessage(
-              {{ isStreamlitMessage: true, type: "streamlit:setComponentValue", value: txt }},
-              "*"
-            );
-          }};
+def get_city_from_ip_browser():
+    """
+    Exécute un fetch côté navigateur via streamlit_js_eval.
+    Retour attendu: dict {ok, city, region, country} ou None (si pas encore dispo).
+    """
+    js = """
+    (async () => {
+      try {
+        const r = await fetch("https://ipapi.co/json/");
+        const d = await r.json();
+        return { ok: true, city: d.city, region: d.region, country: d.country_name };
+      } catch(e) {
+        return { ok: false, error: String(e) };
+      }
+    })()
+    """
+    try:
+        return streamlit_js_eval(js_expressions=js, key=f"ip_eval_{st.session_state.ip_attempts}", want_output=True)
+    except Exception:
+        return None
 
-          // nonce: {nonce}
-
-          if (!navigator.geolocation) {{
-            send({{ok:false, error:"Geolocation not supported"}});
-            return;
-          }}
-
-          navigator.geolocation.getCurrentPosition(
-            (pos) => send({{ok:true, coords:{{
-              latitude: pos.coords.latitude,
-              longitude: pos.coords.longitude,
-              accuracy: pos.coords.accuracy
-            }}}}),
-            (err) => send({{ok:false, code: err.code, error: err.message}}),
-            {{ enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }}
-          );
-        }})();
-        </script>
-        """,
-        height=0,
-    )
-
-def _ip_city_component():
-    nonce = str(time.time())
-    return components.html(
-        f"""
-        <script>
-        (function () {{
-          const send = (obj) => {{
-            const txt = JSON.stringify(obj);
-            window.parent.postMessage(
-              {{ isStreamlitMessage: true, type: "streamlit:setComponentValue", value: txt }},
-              "*"
-            );
-          }};
-
-          // nonce: {nonce}
-
-          fetch("https://ipapi.co/json/")
-            .then(r => r.json())
-            .then(d => send({{ok:true, city:d.city, region:d.region, country:d.country_name}}))
-            .catch(e => send({{ok:false, error:String(e)}}));
-        }})();
-        </script>
-        """,
-        height=0,
-    )
-
-def _poll_browser_geo(timeout_s: float = 12.0, max_attempts: int = 25):
-    """Lance des reruns jusqu'à récupérer un payload GPS (ou timeout)."""
-    if not st.session_state.geo_pending:
-        return
-
-    if time.time() - st.session_state.geo_started_at > timeout_s:
-        st.session_state.geo_pending = False
-        st.session_state.geo_payload = {"ok": False, "error": "timeout_global"}
-        return
-
-    if st.session_state.geo_attempt >= max_attempts:
-        st.session_state.geo_pending = False
-        st.session_state.geo_payload = {"ok": False, "error": "max_attempts"}
-        return
-
-    st.session_state.geo_attempt += 1
-    raw = _browser_geo_component()
-
-    # raw arrive souvent au rerun suivant → polling
-    if raw:
-        try:
-            st.session_state.geo_payload = json.loads(raw)
-        except Exception:
-            st.session_state.geo_payload = {"ok": False, "error": "invalid_json", "raw": raw}
-        st.session_state.geo_pending = False
-        return
-
-    time.sleep(0.25)
-    st.rerun()
-
-def _poll_ip_city(timeout_s: float = 8.0, max_attempts: int = 20):
-    """Récupère la ville via IP côté navigateur (quasi toujours dispo)."""
-    if not st.session_state.ip_pending:
-        return
-
-    if time.time() - st.session_state.ip_started_at > timeout_s:
-        st.session_state.ip_pending = False
-        st.session_state.ip_payload = {"ok": False, "error": "timeout_global"}
-        return
-
-    if st.session_state.ip_attempt >= max_attempts:
-        st.session_state.ip_pending = False
-        st.session_state.ip_payload = {"ok": False, "error": "max_attempts"}
-        return
-
-    st.session_state.ip_attempt += 1
-    raw = _ip_city_component()
-
-    if raw:
-        try:
-            st.session_state.ip_payload = json.loads(raw)
-        except Exception:
-            st.session_state.ip_payload = {"ok": False, "error": "invalid_json", "raw": raw}
-        st.session_state.ip_pending = False
-        return
-
-    time.sleep(0.25)
-    st.rerun()
-
+# =========================
+# Détection ville "best effort" (GPS -> IP browser -> None)
+# =========================
 def detect_city_best_effort() -> tuple[str | None, dict]:
-    """
-    Option "quasi certaine":
-    1) GPS navigateur -> reverse geocode -> ville
-    2) sinon ville IP côté navigateur (ipapi) -> ville
-    3) sinon None
-    """
-    dbg = {}
+    dbg = {"chosen": "none"}
 
-    # 1) Si payload GPS disponible
-    geo = st.session_state.geo_payload
-    dbg["geo_payload"] = geo
-
-    if geo and geo.get("ok") and "coords" in geo:
+    # 1) GPS navigateur
+    geo = st.session_state.geo_data
+    dbg["browser_geo"] = geo
+    if geo and "coords" in geo:
         lat = geo["coords"]["latitude"]
         lon = geo["coords"]["longitude"]
         acc = geo["coords"].get("accuracy", 999999)
         dbg["coords"] = {"lat": lat, "lon": lon, "accuracy": acc}
 
-        # Pour la ville, on accepte une précision large
-        if acc <= 100000:  # 100 km (PC parfois large)
+        # Pour juste la ville, on accepte large
+        if acc <= 100000:
             city = reverse_city_google(lat, lon) or reverse_city_osm(lat, lon)
-            dbg["chosen"] = "browser_gps"
-            dbg["city_from_gps"] = city
             if city:
+                dbg["chosen"] = "browser_gps"
                 return city, dbg
         else:
             dbg["gps_ignored"] = f"accuracy too high: {acc}"
 
-    # 2) Sinon, IP côté navigateur (quasi toujours)
-    ipd = st.session_state.ip_payload
-    dbg["ip_payload"] = ipd
-    if ipd and ipd.get("ok"):
+    # 2) IP côté navigateur
+    ipd = st.session_state.ip_data
+    dbg["ip_browser"] = ipd
+    if ipd and isinstance(ipd, dict) and ipd.get("ok"):
         city = ipd.get("city")
-        dbg["chosen"] = "browser_ip"
-        dbg["city_from_ip"] = city
         if city:
+            dbg["chosen"] = "browser_ip"
             return city, dbg
 
-    dbg["chosen"] = "none"
     return None, dbg
 
 # =========================
@@ -361,31 +253,51 @@ with st.sidebar:
 
     if ctx.geo_permission:
         if st.button("📍 Détecter ma position", use_container_width=True):
-            # Reset + lance les deux méthodes (GPS + IP) en parallèle
+            # reset + lance polling GPS + polling IP
             st.session_state.geo_pending = True
-            st.session_state.geo_started_at = time.time()
-            st.session_state.geo_attempt = 0
-            st.session_state.geo_payload = None
+            st.session_state.geo_deadline = time.time() + 12
+            st.session_state.geo_attempts = 0
+            st.session_state.geo_data = None
 
             st.session_state.ip_pending = True
-            st.session_state.ip_started_at = time.time()
-            st.session_state.ip_attempt = 0
-            st.session_state.ip_payload = None
+            st.session_state.ip_deadline = time.time() + 8
+            st.session_state.ip_attempts = 0
+            st.session_state.ip_data = None
 
             st.rerun()
 
-        # Poll GPS d'abord (si possible)
+        # ---- Poll GPS ----
         if st.session_state.geo_pending:
             st.info("Détection GPS en cours… accepte la demande de localisation si elle apparaît.")
-            _poll_browser_geo()
+            if time.time() > st.session_state.geo_deadline or st.session_state.geo_attempts > 25:
+                st.session_state.geo_pending = False
+            else:
+                st.session_state.geo_attempts += 1
+                geo = get_geolocation()
+                if geo and "coords" in geo:
+                    st.session_state.geo_data = geo
+                    st.session_state.geo_pending = False
+                else:
+                    time.sleep(0.25)
+                    st.rerun()
 
-        # Poll IP (quasi certain pour une ville)
+        # ---- Poll IP (browser) ----
         if st.session_state.ip_pending:
             st.info("Fallback ville via IP en cours…")
-            _poll_ip_city()
+            if time.time() > st.session_state.ip_deadline or st.session_state.ip_attempts > 20:
+                st.session_state.ip_pending = False
+            else:
+                st.session_state.ip_attempts += 1
+                ipd = get_city_from_ip_browser()
+                if ipd and isinstance(ipd, dict):
+                    st.session_state.ip_data = ipd
+                    st.session_state.ip_pending = False
+                else:
+                    time.sleep(0.25)
+                    st.rerun()
 
-        # Quand tout est fini, on calcule la ville
-        if (not st.session_state.geo_pending) and (not st.session_state.ip_pending) and (st.session_state.geo_payload or st.session_state.ip_payload):
+        # ---- Résultat ----
+        if (not st.session_state.geo_pending) and (not st.session_state.ip_pending) and (st.session_state.geo_data or st.session_state.ip_data):
             city, dbg = detect_city_best_effort()
             st.write(dbg)
 
@@ -394,6 +306,7 @@ with st.sidebar:
                 st.success(f"Ville détectée : {city}")
             else:
                 st.error("Impossible de détecter la ville. Utilise la saisie manuelle.")
+
     else:
         st.caption("Autorise la position pour tenter une géoloc précise. Sinon, utilise la ville manuelle.")
 
@@ -404,9 +317,9 @@ with st.sidebar:
         ctx.city = None
 
         st.session_state.geo_pending = False
-        st.session_state.geo_payload = None
+        st.session_state.geo_data = None
         st.session_state.ip_pending = False
-        st.session_state.ip_payload = None
+        st.session_state.ip_data = None
         st.rerun()
 
 # =========================
