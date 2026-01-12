@@ -156,7 +156,7 @@ def detect_city_hybrid() -> tuple[str | None, dict | None]:
             debug["coords"] = {"lat": lat, "lon": lon, "accuracy": acc}
 
             # si trop imprécis, on ignore
-            if acc <= 10000:
+            if acc <= 50000:
                 city = reverse_city_google(lat, lon) or reverse_city_osm(lat, lon)
                 if city:
                     debug["chosen"] = "browser"
