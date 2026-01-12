@@ -1,4 +1,12 @@
 import os
+# =========================
+# fix pour question de cache HF en cloud
+# =========================
+os.environ["HF_HUB_DISABLE_XET"] = "1"
+os.environ["HF_HOME"] = "/home/appuser/.cache/huggingface"
+os.environ["TRANSFORMERS_CACHE"] = "/home/appuser/.cache/huggingface"
+os.environ["SENTENCE_TRANSFORMERS_HOME"] = "/home/appuser/.cache/sentence_transformers"
+
 import re
 import time
 import types
@@ -39,15 +47,6 @@ if gmaps_key:
     os.environ["GOOGLE_MAPS_API_KEY"] = gmaps_key
 
 gmaps = googlemaps.Client(key=gmaps_key) if gmaps_key else None
-
-
-# =========================
-# fix pour question de cache HF en cloud
-# =========================
-os.environ["HF_HUB_DISABLE_XET"] = "1"
-os.environ["HF_HOME"] = "/home/appuser/.cache/huggingface"
-os.environ["TRANSFORMERS_CACHE"] = "/home/appuser/.cache/huggingface"
-os.environ["SENTENCE_TRANSFORMERS_HOME"] = "/home/appuser/.cache/sentence_transformers"
 
 # =========================
 # Styles (simple + chat clean)
