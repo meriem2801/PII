@@ -227,6 +227,7 @@ with st.sidebar:
     if ctx.geo_permission:
         if st.button("📍 Détecter ma position", use_container_width=True):
             city, dbg = detect_city_hybrid()
+            st.write(dbg)
             if city:
                 set_city(city)
                 st.success(f"Ville détectée : {city}")
