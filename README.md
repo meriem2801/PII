@@ -4,6 +4,7 @@
 > **Date :** 23 mai 2025
 > **Remerciements :** Merci à **Monsieur Adam** pour son encadrement et son aide tout au long de ce projet individuel.  Merci à **Elena** pour ses retours sur le multimodal GTFS et l'API proposé par gouvernement transport.data.gouv.fr.
 
+Le projet a été déployé et est accessible via l'adresse suivante : [Assistant urbain](https://meriem-dogheche.streamlit.app/)
 ---
 
 ## Table des matières
