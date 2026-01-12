@@ -10,13 +10,12 @@ os.environ["SENTENCE_TRANSFORMERS_HOME"] = "/home/appuser/.cache/sentence_transf
 import re
 import time
 import types
+import json
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 import googlemaps
 from dotenv import load_dotenv
-from streamlit_js_eval import get_geolocation
-import json
-import streamlit.components.v1 as components
 from agents.dispatcher import Dispatcher
 
 # =========================
@@ -73,6 +72,25 @@ if "history" not in st.session_state:
 if "user_city" not in st.session_state:
     st.session_state.user_city = None
 
+# --- états pour polling géoloc fiable ---
+if "geo_pending" not in st.session_state:
+    st.session_state.geo_pending = False
+if "geo_started_at" not in st.session_state:
+    st.session_state.geo_started_at = 0.0
+if "geo_attempt" not in st.session_state:
+    st.session_state.geo_attempt = 0
+if "geo_payload" not in st.session_state:
+    st.session_state.geo_payload = None
+
+if "ip_pending" not in st.session_state:
+    st.session_state.ip_pending = False
+if "ip_started_at" not in st.session_state:
+    st.session_state.ip_started_at = 0.0
+if "ip_attempt" not in st.session_state:
+    st.session_state.ip_attempt = 0
+if "ip_payload" not in st.session_state:
+    st.session_state.ip_payload = None
+
 # =========================
 # Dispatcher + context
 # =========================
@@ -117,29 +135,18 @@ def reverse_city_google(lat: float, lon: float) -> str | None:
     except Exception:
         return None
 
-@st.cache_data(ttl=3600)
-def ip_geolocate_google() -> str | None:
-    """
-    IP-based : en local peut être OK, en cloud souvent faux.
-    On ne l'utilise qu'en fallback.
-    """
-    if not gmaps:
-        return None
-    try:
-        geo = gmaps.geolocate()
-        lat, lon = geo["location"]["lat"], geo["location"]["lng"]
-        return reverse_city_google(lat, lon) or reverse_city_osm(lat, lon)
-    except Exception:
-        return None
-
 def set_city(city: str | None):
     if city:
         st.session_state.user_city = city
         ctx.location = city
         ctx.city = city
 
-def _geo_component_once():
-    nonce = str(time.time())  # force un HTML différent à chaque appel
+# =========================
+# ✅ Composants navigateur (GPS + IP) + polling
+# =========================
+def _browser_geo_component():
+    # Pas de key= (ta version Streamlit ne le supporte pas)
+    nonce = str(time.time())
     return components.html(
         f"""
         <script>
@@ -174,71 +181,132 @@ def _geo_component_once():
         height=0,
     )
 
-def get_geolocation_fallback():
+def _ip_city_component():
+    nonce = str(time.time())
+    return components.html(
+        f"""
+        <script>
+        (function () {{
+          const send = (obj) => {{
+            const txt = JSON.stringify(obj);
+            window.parent.postMessage(
+              {{ isStreamlitMessage: true, type: "streamlit:setComponentValue", value: txt }},
+              "*"
+            );
+          }};
+
+          // nonce: {nonce}
+
+          fetch("https://ipapi.co/json/")
+            .then(r => r.json())
+            .then(d => send({{ok:true, city:d.city, region:d.region, country:d.country_name}}))
+            .catch(e => send({{ok:false, error:String(e)}}));
+        }})();
+        </script>
+        """,
+        height=0,
+    )
+
+def _poll_browser_geo(timeout_s: float = 12.0, max_attempts: int = 25):
+    """Lance des reruns jusqu'à récupérer un payload GPS (ou timeout)."""
+    if not st.session_state.geo_pending:
+        return
+
+    if time.time() - st.session_state.geo_started_at > timeout_s:
+        st.session_state.geo_pending = False
+        st.session_state.geo_payload = {"ok": False, "error": "timeout_global"}
+        return
+
+    if st.session_state.geo_attempt >= max_attempts:
+        st.session_state.geo_pending = False
+        st.session_state.geo_payload = {"ok": False, "error": "max_attempts"}
+        return
+
+    st.session_state.geo_attempt += 1
+    raw = _browser_geo_component()
+
+    # raw arrive souvent au rerun suivant → polling
+    if raw:
+        try:
+            st.session_state.geo_payload = json.loads(raw)
+        except Exception:
+            st.session_state.geo_payload = {"ok": False, "error": "invalid_json", "raw": raw}
+        st.session_state.geo_pending = False
+        return
+
+    time.sleep(0.25)
+    st.rerun()
+
+def _poll_ip_city(timeout_s: float = 8.0, max_attempts: int = 20):
+    """Récupère la ville via IP côté navigateur (quasi toujours dispo)."""
+    if not st.session_state.ip_pending:
+        return
+
+    if time.time() - st.session_state.ip_started_at > timeout_s:
+        st.session_state.ip_pending = False
+        st.session_state.ip_payload = {"ok": False, "error": "timeout_global"}
+        return
+
+    if st.session_state.ip_attempt >= max_attempts:
+        st.session_state.ip_pending = False
+        st.session_state.ip_payload = {"ok": False, "error": "max_attempts"}
+        return
+
+    st.session_state.ip_attempt += 1
+    raw = _ip_city_component()
+
+    if raw:
+        try:
+            st.session_state.ip_payload = json.loads(raw)
+        except Exception:
+            st.session_state.ip_payload = {"ok": False, "error": "invalid_json", "raw": raw}
+        st.session_state.ip_pending = False
+        return
+
+    time.sleep(0.25)
+    st.rerun()
+
+def detect_city_best_effort() -> tuple[str | None, dict]:
     """
-    Retourne un dict du style:
-    - {"coords": {"latitude":..., "longitude":..., "accuracy":...}}
-    ou None si pas encore dispo / refus / erreur.
+    Option "quasi certaine":
+    1) GPS navigateur -> reverse geocode -> ville
+    2) sinon ville IP côté navigateur (ipapi) -> ville
+    3) sinon None
     """
-    # 1) On tente d'abord streamlit_js_eval (ton actuel)
-    try:
-        geo = get_geolocation()
-        if geo and "coords" in geo:
-            return geo
-    except Exception:
-        pass
+    dbg = {}
 
-    # 2) Fallback: composant HTML/JS (getCurrentPosition)
-    raw = _geo_component_once()
-    if not raw:
-        return None
+    # 1) Si payload GPS disponible
+    geo = st.session_state.geo_payload
+    dbg["geo_payload"] = geo
 
-    try:
-        data = json.loads(raw)
-    except Exception:
-        return None
+    if geo and geo.get("ok") and "coords" in geo:
+        lat = geo["coords"]["latitude"]
+        lon = geo["coords"]["longitude"]
+        acc = geo["coords"].get("accuracy", 999999)
+        dbg["coords"] = {"lat": lat, "lon": lon, "accuracy": acc}
 
-    if data.get("ok") and "coords" in data:
-        # On renvoie au format attendu par ton code actuel
-        return {"coords": data["coords"]}
+        # Pour la ville, on accepte une précision large
+        if acc <= 100000:  # 100 km (PC parfois large)
+            city = reverse_city_google(lat, lon) or reverse_city_osm(lat, lon)
+            dbg["chosen"] = "browser_gps"
+            dbg["city_from_gps"] = city
+            if city:
+                return city, dbg
+        else:
+            dbg["gps_ignored"] = f"accuracy too high: {acc}"
 
-    return None
+    # 2) Sinon, IP côté navigateur (quasi toujours)
+    ipd = st.session_state.ip_payload
+    dbg["ip_payload"] = ipd
+    if ipd and ipd.get("ok"):
+        city = ipd.get("city")
+        dbg["chosen"] = "browser_ip"
+        dbg["city_from_ip"] = city
+        if city:
+            return city, dbg
 
-
-def detect_city_hybrid() -> tuple[str | None, dict | None]:
-    """
-    1) Browser geolocation (si précis)
-    2) Sinon fallback IP Google geolocate()
-    Retourne (city, debug_dict)
-    """
-    debug = {}
-
-    # 1) Navigateur
-    try:
-        geo = get_geolocation_fallback()
-        debug["browser_geo"] = geo
-        if geo and "coords" in geo:
-            lat = geo["coords"]["latitude"]
-            lon = geo["coords"]["longitude"]
-            acc = geo["coords"].get("accuracy", 999999)
-            debug["coords"] = {"lat": lat, "lon": lon, "accuracy": acc}
-
-            # si trop imprécis, on ignore
-            if acc <= 50000:
-                city = reverse_city_google(lat, lon) or reverse_city_osm(lat, lon)
-                if city:
-                    debug["chosen"] = "browser"
-                    return city, debug
-            else:
-                debug["browser_ignored"] = f"accuracy too high: {acc}"
-
-    except Exception as e:
-        debug["browser_error"] = str(e)
-
-    # 2) Fallback IP Google
-    city_ip = ip_geolocate_google()
-    debug["chosen"] = "ip_google" if city_ip else "none"
-    return city_ip, debug
+    dbg["chosen"] = "none"
+    return None, dbg
 
 # =========================
 # Business helpers
@@ -281,7 +349,6 @@ with st.sidebar:
 
     typing = st.toggle("Effet d'écriture", value=True)
     show_local = st.toggle("Afficher infos locales", value=True)
-    # debug_geo = st.toggle("Debug géoloc", value=False)
 
     st.divider()
 
@@ -294,16 +361,39 @@ with st.sidebar:
 
     if ctx.geo_permission:
         if st.button("📍 Détecter ma position", use_container_width=True):
-            city, dbg = detect_city_hybrid()
+            # Reset + lance les deux méthodes (GPS + IP) en parallèle
+            st.session_state.geo_pending = True
+            st.session_state.geo_started_at = time.time()
+            st.session_state.geo_attempt = 0
+            st.session_state.geo_payload = None
+
+            st.session_state.ip_pending = True
+            st.session_state.ip_started_at = time.time()
+            st.session_state.ip_attempt = 0
+            st.session_state.ip_payload = None
+
+            st.rerun()
+
+        # Poll GPS d'abord (si possible)
+        if st.session_state.geo_pending:
+            st.info("Détection GPS en cours… accepte la demande de localisation si elle apparaît.")
+            _poll_browser_geo()
+
+        # Poll IP (quasi certain pour une ville)
+        if st.session_state.ip_pending:
+            st.info("Fallback ville via IP en cours…")
+            _poll_ip_city()
+
+        # Quand tout est fini, on calcule la ville
+        if (not st.session_state.geo_pending) and (not st.session_state.ip_pending) and (st.session_state.geo_payload or st.session_state.ip_payload):
+            city, dbg = detect_city_best_effort()
             st.write(dbg)
+
             if city:
                 set_city(city)
                 st.success(f"Ville détectée : {city}")
             else:
                 st.error("Impossible de détecter la ville. Utilise la saisie manuelle.")
-
-            # if debug_geo:
-            #     st.write(dbg)
     else:
         st.caption("Autorise la position pour tenter une géoloc précise. Sinon, utilise la ville manuelle.")
 
@@ -312,6 +402,11 @@ with st.sidebar:
         st.session_state.user_city = None
         ctx.location = None
         ctx.city = None
+
+        st.session_state.geo_pending = False
+        st.session_state.geo_payload = None
+        st.session_state.ip_pending = False
+        st.session_state.ip_payload = None
         st.rerun()
 
 # =========================
