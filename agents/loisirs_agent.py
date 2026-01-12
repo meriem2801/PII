@@ -1,20 +1,21 @@
-import openai
+import os
+from openai import OpenAI
 from config import OPENAI_API_KEY
 
 class LoisirsAgent:
     def __init__(self):
         self.model = "gpt-4o"
+        self.client = OpenAI(api_key=OPENAI_API_KEY or os.getenv("OPENAI_API_KEY"))
         self.conversation_history = [
             {"role": "system", "content": "Réponds en expert en loisirs et événements culturels."}
         ]
 
     def handle_request(self, user_input):
         self.conversation_history.append({"role": "user", "content": user_input})
-        response = openai.ChatCompletion.create(
+        response = self.client.chat.completions.create(
             model=self.model,
-            messages=self.conversation_history,
-            api_key=OPENAI_API_KEY
+            messages=self.conversation_history
         )
-        reply = response["choices"][0]["message"]["content"]
+        reply = response.choices[0].message.content
         self.conversation_history.append({"role": "assistant", "content": reply})
         return reply

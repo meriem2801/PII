@@ -2,12 +2,13 @@ import os
 import re
 from datetime import datetime
 
-import openai
+from openai import OpenAI
 import googlemaps
 
 class TransportAgent:
     def __init__(self):
-        openai.api_key = os.getenv("OPENAI_API_KEY")
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+        self.client = OpenAI(api_key=openai_api_key)
         self.gmaps = googlemaps.Client(
             key=os.getenv("GOOGLE_MAPS_API_KEY"),
             timeout=10
@@ -46,7 +47,7 @@ class TransportAgent:
             "est une demande d'itinéraire (« de A à B ») ou une question générale sur les transports.\n"
             "Répondez strictement par ITINERARY ou GENERAL."
         )
-        resp = openai.ChatCompletion.create(
+        resp = self.client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system",  "content": prompt},
@@ -64,7 +65,7 @@ class TransportAgent:
             "Transformez la phrase de l'utilisateur en une forme exacte « de X à Y ». "
             "Si non pertinent, renvoyez une chaîne vide."
         )
-        resp = openai.ChatCompletion.create(
+        resp = self.client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system",  "content": prompt},
@@ -79,7 +80,7 @@ class TransportAgent:
         kind = self.classify_request(user_input)
         if kind != "ITINERARY":
             # question générale, on délègue à OpenAI --- type "Quel est le moyen de transport le + écologique"
-            resp = openai.ChatCompletion.create(
+            resp = self.client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
                     {"role": "system",  "content": "Vous êtes un expert en transport. Répondez clairement à la question."},
