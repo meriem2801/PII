@@ -15,7 +15,8 @@ import streamlit as st
 import googlemaps
 from dotenv import load_dotenv
 from streamlit_js_eval import get_geolocation
-
+import json
+import streamlit.components.v1 as components
 from agents.dispatcher import Dispatcher
 
 # =========================
@@ -136,6 +137,74 @@ def set_city(city: str | None):
         st.session_state.user_city = city
         ctx.location = city
         ctx.city = city
+def _geo_component_once():
+    """
+    Appelle navigator.geolocation.getCurrentPosition() côté navigateur
+    et renvoie une string JSON via le channel Streamlit.
+    """
+    return components.html(
+        """
+        <script>
+        (function () {
+          const send = (obj) => {
+            const txt = JSON.stringify(obj);
+            window.parent.postMessage(
+              { isStreamlitMessage: true, type: "streamlit:setComponentValue", value: txt },
+              "*"
+            );
+          };
+
+          if (!navigator.geolocation) {
+            send({ok:false, error:"Geolocation not supported"});
+            return;
+          }
+
+          navigator.geolocation.getCurrentPosition(
+            (pos) => send({ok:true, coords:{
+              latitude: pos.coords.latitude,
+              longitude: pos.coords.longitude,
+              accuracy: pos.coords.accuracy
+            }}),
+            (err) => send({ok:false, code: err.code, error: err.message}),
+            { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+          );
+        })();
+        </script>
+        """,
+        height=0,
+        key=f"geo_comp_{time.time()}",
+    )
+
+def get_geolocation_fallback():
+    """
+    Retourne un dict du style:
+    - {"coords": {"latitude":..., "longitude":..., "accuracy":...}}
+    ou None si pas encore dispo / refus / erreur.
+    """
+    # 1) On tente d'abord streamlit_js_eval (ton actuel)
+    try:
+        geo = get_geolocation()
+        if geo and "coords" in geo:
+            return geo
+    except Exception:
+        pass
+
+    # 2) Fallback: composant HTML/JS (getCurrentPosition)
+    raw = _geo_component_once()
+    if not raw:
+        return None
+
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return None
+
+    if data.get("ok") and "coords" in data:
+        # On renvoie au format attendu par ton code actuel
+        return {"coords": data["coords"]}
+
+    return None
+
 
 def detect_city_hybrid() -> tuple[str | None, dict | None]:
     """
@@ -147,7 +216,7 @@ def detect_city_hybrid() -> tuple[str | None, dict | None]:
 
     # 1) Navigateur
     try:
-        geo = get_geolocation()
+        geo = get_geolocation_fallback()
         debug["browser_geo"] = geo
         if geo and "coords" in geo:
             lat = geo["coords"]["latitude"]
