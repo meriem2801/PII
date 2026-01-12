@@ -1,6 +1,6 @@
 import os
 # =========================
-# fix pour question de cache HF en cloud
+# fix pour cache HF en cloud
 # =========================
 os.environ["HF_HUB_DISABLE_XET"] = "1"
 os.environ["HF_HOME"] = "/home/appuser/.cache/huggingface"
@@ -10,11 +10,12 @@ os.environ["SENTENCE_TRANSFORMERS_HOME"] = "/home/appuser/.cache/sentence_transf
 import re
 import time
 import types
+import json
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 import googlemaps
 from dotenv import load_dotenv
-from streamlit_js_eval import get_geolocation
 
 from agents.dispatcher import Dispatcher
 
@@ -72,6 +73,18 @@ if "history" not in st.session_state:
 if "user_city" not in st.session_state:
     st.session_state.user_city = None
 
+# Pour la détection navigateur (polling)
+if "geo_pending" not in st.session_state:
+    st.session_state.geo_pending = False
+if "geo_started_at" not in st.session_state:
+    st.session_state.geo_started_at = 0.0
+if "geo_attempts" not in st.session_state:
+    st.session_state.geo_attempts = 0
+if "geo_result_raw" not in st.session_state:
+    st.session_state.geo_result_raw = None
+if "geo_debug" not in st.session_state:
+    st.session_state.geo_debug = None
+
 # =========================
 # Dispatcher + context
 # =========================
@@ -112,6 +125,10 @@ def reverse_city_google(lat: float, lon: float) -> str | None:
         for comp in rev[0].get("address_components", []):
             if "locality" in comp.get("types", []):
                 return comp.get("long_name")
+        # fallback : parfois c'est "postal_town" etc.
+        for comp in rev[0].get("address_components", []):
+            if any(t in comp.get("types", []) for t in ["postal_town", "administrative_area_level_2"]):
+                return comp.get("long_name")
         return None
     except Exception:
         return None
@@ -137,39 +154,141 @@ def set_city(city: str | None):
         ctx.location = city
         ctx.city = city
 
+# =========================
+# Browser geolocation (fiable) via HTML component + polling
+# =========================
+def _geo_component(key: str):
+    """
+    Renvoie une string JSON (ou None) envoyée par postMessage.
+    """
+    return components.html(
+        """
+        <script>
+        (function () {
+          const send = (obj) => {
+            const txt = JSON.stringify(obj);
+            window.parent.postMessage(
+              { isStreamlitMessage: true, type: "streamlit:setComponentValue", value: txt },
+              "*"
+            );
+          };
+
+          if (!navigator.geolocation) {
+            send({ ok: false, error: "Geolocation not supported" });
+            return;
+          }
+
+          navigator.geolocation.getCurrentPosition(
+            (pos) => {
+              send({
+                ok: true,
+                coords: {
+                  latitude: pos.coords.latitude,
+                  longitude: pos.coords.longitude,
+                  accuracy: pos.coords.accuracy
+                }
+              });
+            },
+            (err) => {
+              // err.code: 1=denied, 2=unavailable, 3=timeout
+              send({ ok: false, code: err.code, error: err.message });
+            },
+            { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+          );
+        })();
+        </script>
+        """,
+        height=0,
+        key=key,
+    )
+
+def start_geo_request():
+    st.session_state.geo_pending = True
+    st.session_state.geo_started_at = time.time()
+    st.session_state.geo_attempts = 0
+    st.session_state.geo_result_raw = None
+    st.session_state.geo_debug = None
+
+def poll_geo_request(timeout_s: float = 12.0, max_attempts: int = 20):
+    """
+    Lance/continue le polling tant que geo_pending est True.
+    Quand une réponse arrive, met geo_result_raw et stoppe.
+    """
+    if not st.session_state.geo_pending:
+        return
+
+    # Timeout global
+    if time.time() - st.session_state.geo_started_at > timeout_s:
+        st.session_state.geo_pending = False
+        st.session_state.geo_debug = {"ok": False, "error": "timeout_global"}
+        return
+
+    # Too many attempts
+    if st.session_state.geo_attempts >= max_attempts:
+        st.session_state.geo_pending = False
+        st.session_state.geo_debug = {"ok": False, "error": "max_attempts"}
+        return
+
+    # On rend le composant avec une clé qui change pour relancer l'appel
+    st.session_state.geo_attempts += 1
+    raw = _geo_component(key=f"geo_comp_{st.session_state.geo_attempts}_{int(st.session_state.geo_started_at)}")
+
+    if raw:
+        st.session_state.geo_result_raw = raw
+        st.session_state.geo_pending = False
+        return
+
+    # Si rien encore : on attend un peu puis rerun
+    time.sleep(0.25)
+    st.rerun()
+
+def parse_geo_raw(raw: str) -> dict | None:
+    try:
+        return json.loads(raw)
+    except Exception:
+        return None
+
 def detect_city_hybrid() -> tuple[str | None, dict | None]:
     """
-    1) Browser geolocation (si précis)
-    2) Sinon fallback IP Google geolocate()
+    1) Browser geolocation via component HTML (fiable en cloud)
+    2) (optionnel) fallback IP Google geolocate()
     Retourne (city, debug_dict)
     """
-    debug = {}
+    debug: dict = {}
 
-    # 1) Navigateur
-    try:
-        geo = get_geolocation()
+    # 1) Browser: si un résultat est déjà dans session_state
+    raw = st.session_state.geo_result_raw
+    if raw:
+        geo = parse_geo_raw(raw)
+        debug["browser_geo_raw"] = raw
         debug["browser_geo"] = geo
-        if geo and "coords" in geo:
+
+        if geo and geo.get("ok") and "coords" in geo:
             lat = geo["coords"]["latitude"]
             lon = geo["coords"]["longitude"]
             acc = geo["coords"].get("accuracy", 999999)
             debug["coords"] = {"lat": lat, "lon": lon, "accuracy": acc}
 
-            # si trop imprécis, on ignore
-            if acc <= 10000:
+            # Pour trouver juste la VILLE, on accepte même si pas ultra précis.
+            # Sur PC, l'accuracy peut être 20-50km, mais la ville est souvent bonne.
+            # Ajuste si tu veux plus strict.
+            if acc <= 50000:
                 city = reverse_city_google(lat, lon) or reverse_city_osm(lat, lon)
                 if city:
                     debug["chosen"] = "browser"
                     return city, debug
+                else:
+                    debug["browser_reverse_failed"] = True
             else:
                 debug["browser_ignored"] = f"accuracy too high: {acc}"
+        else:
+            # erreur navigateur
+            debug["browser_error"] = geo if geo else "invalid_json"
 
-    except Exception as e:
-        debug["browser_error"] = str(e)
-
-    # 2) Fallback IP Google
+    # 2) Fallback IP Google (optionnel)
     city_ip = ip_geolocate_google()
     debug["chosen"] = "ip_google" if city_ip else "none"
+    debug["ip_city"] = city_ip
     return city_ip, debug
 
 # =========================
@@ -213,7 +332,7 @@ with st.sidebar:
 
     typing = st.toggle("Effet d'écriture", value=True)
     show_local = st.toggle("Afficher infos locales", value=True)
-    # debug_geo = st.toggle("Debug géoloc", value=False)
+    debug_geo = st.toggle("Afficher debug géoloc", value=False)
 
     st.divider()
 
@@ -225,24 +344,46 @@ with st.sidebar:
             st.warning("Entre une ville.")
 
     if ctx.geo_permission:
+        # Bouton : on démarre une requête navigateur
         if st.button("📍 Détecter ma position", use_container_width=True):
+            start_geo_request()
+            # on lance un rerun immédiat pour commencer le polling
+            st.rerun()
+
+        # Si une détection est en cours : on poll jusqu'à réponse/timeout
+        if st.session_state.geo_pending:
+            st.info("Détection en cours… (accepte la demande de localisation si elle apparaît)")
+            poll_geo_request()
+
+        # Si on a un résultat (ou un timeout), on tente de déduire la ville
+        if (st.session_state.geo_result_raw or st.session_state.geo_debug) and (not st.session_state.geo_pending):
             city, dbg = detect_city_hybrid()
+            st.session_state.geo_debug = dbg
+
             if city:
                 set_city(city)
                 st.success(f"Ville détectée : {city}")
             else:
                 st.error("Impossible de détecter la ville. Utilise la saisie manuelle.")
 
-            # if debug_geo:
-            #     st.write(dbg)
+            if debug_geo:
+                st.write(st.session_state.geo_debug)
+
+            # Nettoyage léger (optionnel) : garde le debug, mais évite de réutiliser un vieux résultat
+            # Décommente si tu veux que chaque clic refasse une vraie demande.
+            # st.session_state.geo_result_raw = None
+
     else:
-        st.caption("Autorise la position pour tenter une géoloc précise. Sinon, utilise la ville manuelle.")
+        st.caption("Autorise la position pour tenter une géoloc. Sinon, utilise la ville manuelle.")
 
     if st.button("🧹 Réinitialiser", use_container_width=True):
         st.session_state.history = []
         st.session_state.user_city = None
         ctx.location = None
         ctx.city = None
+        st.session_state.geo_pending = False
+        st.session_state.geo_result_raw = None
+        st.session_state.geo_debug = None
         st.rerun()
 
 # =========================
